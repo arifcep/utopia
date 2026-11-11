@@ -1761,7 +1761,7 @@ int prepare_dhcp_conf (char *input)
         
         // RDKB-15951 Mesh Bhaul vlan address pool
    	fprintf(l_fLocal_Dhcp_ConfFile, "interface=br403\n");
-	fprintf(l_fLocal_Dhcp_ConfFile, "dhcp-range=192.168.245.2,192.168.245.253,255.255.255.0,infinite\n"); 
+	fprintf(l_fLocal_Dhcp_ConfFile, "dhcp-range=192.168.245.2,192.168.245.253,255.255.255.0,7200\n"); 
 
 	// Add l2sd0.1060 custom dns server configuration
 	if( l_bDhcpNs_Enabled && l_bIsValidWanDHCPNs )
@@ -1811,7 +1811,7 @@ int prepare_dhcp_conf (char *input)
 		}
      
         fprintf(l_fLocal_Dhcp_ConfFile, "interface=br403\n");
-        fprintf(l_fLocal_Dhcp_ConfFile, "dhcp-range=192.168.245.2,192.168.245.253,255.255.255.0,infinite\n");
+        fprintf(l_fLocal_Dhcp_ConfFile, "dhcp-range=192.168.245.2,192.168.245.253,255.255.255.0,7200\n");
 
         // Add br403 custom dns server configuration
         if( l_bDhcpNs_Enabled && l_bIsValidWanDHCPNs )
@@ -1875,7 +1875,7 @@ int prepare_dhcp_conf (char *input)
                 }
 
        fprintf(l_fLocal_Dhcp_ConfFile, "interface=br403\n");
-        fprintf(l_fLocal_Dhcp_ConfFile, "dhcp-range=192.168.245.2,192.168.245.253,255.255.255.0,infinite\n");
+        fprintf(l_fLocal_Dhcp_ConfFile, "dhcp-range=192.168.245.2,192.168.245.253,255.255.255.0,7200\n");
 
         // Add br403 custom dns server configuration
         if( l_bDhcpNs_Enabled && l_bIsValidWanDHCPNs )
