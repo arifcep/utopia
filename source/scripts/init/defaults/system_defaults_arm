@@ -924,6 +924,8 @@ $rlog_port=514
 # Device Fingerprint Enable
 $$Advsecurity_DeviceFingerPrint=1
 $$Advsecurity_LogLevel=3
+$$Adv_RaptrRFCEnable=1
+$$Adv_AdvSecUserSpaceRFCEnable=1
 
 $Advsecurity_SafeBrowsing=0
 $Advsecurity_Softflowd=0
@@ -936,20 +938,20 @@ $Adv_PCRFCEnable=1
 $Adv_DFICMPv6RFCEnable=1
 $Adv_WSDisAnaRFCEnable=1
 $Adv_AdvSecOTMRFCEnable=1
-$Adv_AdvSecUserSpaceRFCEnable=0
 $Adv_WifiDataCollectionRFCEnable=0
 $Adv_LevlRFCEnable=0
 $Adv_AdvSecNetworkIntelligenceRFCEnable=0
 $Adv_AdvSecAgentRFCEnable=1
 $Adv_AdvSecSafeBrowsingRFCEnable=1
 $Adv_AdvSecCujoTelemetryWiFiFPRFCEnable=0
-$Adv_AdvSecCujoTracerRFCEnable=0
-$Adv_AdvSecCujoTelemetryRFCEnable=0
+$Adv_AdvSecCujoTracerRFCEnable=1
+$Adv_AdvSecCujoTelemetryRFCEnable=1
 $Adv_SATERFCEnable=0
 $Adv_TCPTrackerFilterDevicesRFCEnable=0
 $Adv_DoHBlockingRFCEnable=0
 $Adv_DNSECHBlockingRFCEnable=0
-$Adv_RaptrRFCEnable=1
+$Adv_DFMLORFCEnable=0
+$Adv_AdvSecNetworkIntelligenceActivate=1
 
 #Firewall log settings
 $$FW_LOG_COMPRESSED_FILE_SIZE=10
@@ -1189,7 +1191,7 @@ $WebUIEnable=1
 $SyndicationFlowControlEnable=false
 $DSCP_InitialForwardedMark=
 $DSCP_InitialOutputMark=
-$dmesglogsync_interval=900
+$dmesglogsync_interval=60
 
 #Enable log and core file encryption at S3 Amazon
 $encryptcloudupload=0
@@ -1204,8 +1206,8 @@ $SNMP_RestartMaintenanceEnable=true
 $DeferFWDownloadReboot=290
 
 #SelfHeal Log Backup
-$log_backup_enable=false
-$log_backup_threshold=0
+$log_backup_enable=true
+$log_backup_threshold=3
 
 #EthAgent Logging default values
 $eth_log_enabled=false
@@ -1234,6 +1236,9 @@ $CpuMemFrag_Interval=4
 
 #Partner support for NTP FQDN
 $new_ntp_enabled=true
+
+#Chrony RFC enable state (false = ntpd active, true = chrony active)
+$chrony_enabled=false
 
 #Enable PresenceDetect
 $PresenceDetectEnabled=false
@@ -1299,7 +1304,7 @@ $Advsecurity_RabidMacCacheSize=10000
 $Advsecurity_RabidDNSCacheSize=10000
 
 # cujo-ni memory limit
-$Advsecurity_NetworkIntelligenceMemoryLimit=25
+$Advsecurity_NetworkIntelligenceMemoryLimit=30
 
 #Ethernet bhaul bridge migration for LnF
 $iot_brname=br106
@@ -1367,9 +1372,6 @@ $EnableOCSPCA=true
 #Defaults for XHFW
 $XHFW_Enable=true
 $XHFW_Status="not activated"
-
-#Use XPKI certificate for lnf
-$LnFUseXPKI_Enable=true
 
 # Dynamic DNS
 $dynamic_dns_enable=0

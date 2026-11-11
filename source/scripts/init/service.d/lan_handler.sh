@@ -54,6 +54,11 @@ SERVICE_NAME="lan_handler"
 
 POSTD_START_FILE="/tmp/.postd_started"
 
+restartWebuiOnLanIpv6AddrChange() {
+    echo_t "Requesting PAM WebUI restart for LAN IPv6 change on $1: $2 -> $3"
+    sysevent set webui-restart lan-ipv6
+}
+
 RPI_SPECIFIC=$BOX_TYPE
 #args: router IP, subnet mask
 ap_addr() {
@@ -162,7 +167,9 @@ case "$1" in
       fi
       ;;
    ipv4_*-status)
+   echo_t "LAN HANDLER : Received $1 event with status $2"
         if [ x"up" = x${2} ]; then
+            echo_t "LAN HANDLER : Handling LAN up event for instance ${1}"
             INST=${1#*_}
             INST=${INST%-*}
             RG_MODE=`syscfg get last_erouter_mode`
@@ -184,12 +191,14 @@ case "$1" in
 
 
     if [ xbrlan0 = x${LAN_IFNAME} ]; then
+        echo_t "LAN HANDLER : Handling LAN up event for brlan0, configuring IPv6 address if needed"
         SYSEVT_lan_ipaddr_v6_prev=`sysevent get lan_ipaddr_v6_prev`
 
         if [ "1" = "$(sysevent get ula_ipv6_enabled)" ] && [ "1" != "$(syscfg get Device_Mode)" ]; then
             SYSEVT_lan_ipaddr_v6=$(sysevent get ipv6_prefix_ula | cut -d "/" -f 1)
             SYSEVT_lan_ipaddr_v6=${SYSEVT_lan_ipaddr_v6}1
         else
+            echo_t "LAN HANDLER : Using global IPv6 address for LAN"
             SYSEVT_lan_ipaddr_v6=`sysevent get lan_ipaddr_v6`
         fi
         SYSEVT_lan_prefix_v6=`sysevent get lan_prefix_v6`
@@ -199,7 +208,11 @@ case "$1" in
             if [ -n "$SYSEVT_lan_ipaddr_v6_prev" ]; then
                 ip -6 addr del $SYSEVT_lan_ipaddr_v6_prev/64 dev $LAN_IFNAME valid_lft forever preferred_lft forever
             fi
-            ip -6 addr add $SYSEVT_lan_ipaddr_v6/64 dev $LAN_IFNAME valid_lft forever preferred_lft forever
+            if ip -6 addr add "$SYSEVT_lan_ipaddr_v6/64" dev "$LAN_IFNAME" valid_lft forever preferred_lft forever &&
+                [ -n "$SYSEVT_lan_ipaddr_v6" ] &&
+                [ "$SYSEVT_lan_ipaddr_v6_prev" != "$SYSEVT_lan_ipaddr_v6" ]; then
+                restartWebuiOnLanIpv6AddrChange "$LAN_IFNAME" "$SYSEVT_lan_ipaddr_v6_prev" "$SYSEVT_lan_ipaddr_v6"
+            fi
         fi
     fi
 
@@ -255,6 +268,7 @@ case "$1" in
 	elif [ x"ready" != x`sysevent get start-misc` ] && ( [ "$MANUFACTURE" = "Technicolor" ] || [ "$MANUFACTURE" = "Sercomm" ] ) ; then
                #TCH XBx/TCCBR based startup post.d scripts which includes Firewall restart and dhcp start.
                sysevent set lan-status started
+               echo_t "LAN HANDLER : lan status set to started"
                firewall
                if [ ! -f "$POSTD_START_FILE" ];
                 then
@@ -264,6 +278,7 @@ case "$1" in
 	   else
 		echo_t "LAN HANDLER : Triggering DHCP server using LAN status"
                 sysevent set lan-status started
+                echo_t "LAN HANDLER : lan status set to started"
 		echo_t "LAN HANDLER : Triggering RDKB_FIREWALL_RESTART"
 		t2CountNotify "RF_INFO_RDKB_FIREWALL_RESTART"
                 sysevent set firewall-restart
@@ -314,6 +329,8 @@ case "$1" in
         sysevent set firewall-restart
 	if [ -e "/usr/bin/print_uptime" ]; then
 	    /usr/bin/print_uptime "Laninit_complete"
+        echo_t "LAN HANDLER : Laninit_complete uptime: $(cut -d. -f1 /proc/uptime)"
+        echo_t "LAN HANDLER : Checking lan-status after lan init complete, lan-status = $(sysevent get lan-status)"
 	fi
 
         uptime=$(cut -d. -f1 /proc/uptime)
@@ -344,7 +361,7 @@ case "$1" in
    pnm-status | bring-lan)
 	if [ -e "/usr/bin/print_uptime" ]; then
             /usr/bin/print_uptime "Lan_init_start"
-        fi
+    fi
         uptime=$(cut -d. -f1 /proc/uptime)
 	if [ -e "/usr/bin/onboarding_log" ]; then
 	    /usr/bin/onboarding_log "Lan_init_start:$uptime"
@@ -371,7 +388,7 @@ case "$1" in
 				echo_t "THE COUNTER =$COUNTER"
 			done
 		else
-			echo_t "RDKB_SYSTEM_BOOT_UP_LOG : INST rerurned null, retrying"
+			echo_t "RDKB_SYSTEM_BOOT_UP_LOG : INST returned null, retrying"
 			INST=`psmcli get dmsb.MultiLAN.PrimaryLAN_l3net`
 		fi
 
@@ -513,7 +530,9 @@ case "$1" in
             if [ -n "$SYSEVT_lan_ipaddr_v6_prev" ]; then
                 ip -6 addr del $SYSEVT_lan_ipaddr_v6_prev/64 dev $LAN_IFNAME valid_lft forever preferred_lft forever
             fi
-            ip -6 addr add $SYSEVT_lan_ipaddr_v6/64 dev $LAN_IFNAME valid_lft forever preferred_lft forever
+            if ip -6 addr add "$SYSEVT_lan_ipaddr_v6/64" dev "$LAN_IFNAME" valid_lft forever preferred_lft forever; then
+                restartWebuiOnLanIpv6AddrChange "$LAN_IFNAME" "$SYSEVT_lan_ipaddr_v6_prev" "$SYSEVT_lan_ipaddr_v6"
+            fi
         fi
 	lan_restarted_value="true"
 	sysevent set lan_restarted $lan_restarted_value
@@ -536,7 +555,7 @@ case "$1" in
    ;;
 
    lan-start)
-        if [ "$RPI_SPECIFIC" = "rpi" ] || [ "$BOX_TYPE" = "bpi" ] || [ "$BOX_TYPE" = "HUB4" ] || [ "$BOX_TYPE" = "SR213" ] || [ "$BOX_TYPE" = "SCER11BEL" ] || [ "$BOX_TYPE" = "SCXF11BFL" ]; then
+        if [ "$RPI_SPECIFIC" = "rpi" ] || [ "$BOX_TYPE" = "bpi" ] || [ "$BOX_TYPE" = "HUB4" ] || [ "$BOX_TYPE" = "SR213" ] || [ "$BOX_TYPE" = "SCER11BEL" ] || [ "$BOX_TYPE" = "SCXF11BFL" ] || [ "$BOX_TYPE" = "XER2" ]; then
              L3Net=`sysevent get primary_lan_l3net`
              if [ -z "$L3Net" ]; then
                  echo_t "RDKB_SYSTEM_BOOT_UP_LOG : L3Net is null"

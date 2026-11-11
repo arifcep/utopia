@@ -131,7 +131,7 @@ int prepare_ipv6_firewall(const char *fw_file);
 #define _PROCNET_IFINET6  "/proc/net/if_inet6"
 #define MAX_INET6_PROC_CHARS 200
 
-#if defined(_COSA_BCM_ARM_) && (defined(_CBR_PRODUCT_REQ_) || defined(_XB6_PRODUCT_REQ_)) && !defined(_SCER11BEL_PRODUCT_REQ_) && !defined(_XER5_PRODUCT_REQ_)
+#if defined(_COSA_BCM_ARM_) && (defined(_CBR_PRODUCT_REQ_) || defined(_XB6_PRODUCT_REQ_)) && !defined(_SCER11BEL_PRODUCT_REQ_) && !defined(_XER5_PRODUCT_REQ_) && !defined(_XER2_PRODUCT_REQ_)
 #define CM_SNMP_AGENT             "172.31.255.45"
 #define kOID_cmRemoteIpAddress    "1.3.6.1.4.1.4413.2.2.2.1.2.12161.1.2.2.0"
 #define kOID_cmRemoteIpv6Address  "1.3.6.1.4.1.4413.2.2.2.1.2.12161.1.3.2.0"
@@ -419,19 +419,6 @@ int wan_lan_webui_attack(FILE *fp, const char *interface);
 *
 */
 int prepare_rabid_rules(FILE *filter_fp, FILE *mangle_fp, ip_ver_t ver);
-
-/**
-* @brief Prepare RABID rules version 2020Q3B.
-*
-* @param[in] filter_fp - Pointer to the FILE stream for writing filter table rules.
-* @param[in] mangle_fp - Pointer to the FILE stream for writing mangle table rules.
-* @param[in] ver - IP version type.
-*
-* @return The status of the operation.
-* @retval 0 on success.
-*
-*/
-int prepare_rabid_rules_v2020Q3B(FILE *filter_fp, FILE *mangle_fp, ip_ver_t ver);
 
 /**
 * @brief Prepare RABID rules for MAP-T (Mapping of Address and Port with Translation).

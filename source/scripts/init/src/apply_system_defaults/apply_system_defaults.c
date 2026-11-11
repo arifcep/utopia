@@ -51,7 +51,7 @@
 #include "time.h"
 #include "secure_wrapper.h"
 #include <sys/stat.h>
-#if defined (_XB6_PRODUCT_REQ_) || defined(_HUB4_PRODUCT_REQ_) || defined(_SR300_PRODUCT_REQ_) || defined(_WNXL11BWL_PRODUCT_REQ_) || defined (_SCER11BEL_PRODUCT_REQ_) || defined(_SCXF11BFL_PRODUCT_REQ_)
+#if defined (_XB6_PRODUCT_REQ_) || defined(_HUB4_PRODUCT_REQ_) || defined(_SR300_PRODUCT_REQ_) || defined(_WNXL11BWL_PRODUCT_REQ_) || defined (_SCER11BEL_PRODUCT_REQ_) || defined(_SCXF11BFL_PRODUCT_REQ_) || defined(_XER2_PRODUCT_REQ_)
 #include "platform_hal.h"
 #endif
 #include <unistd.h>
@@ -635,6 +635,12 @@ static char *json_file_parse (char *path)
 static int writeToJson(char *data, char *file)
 {
     FILE 	*fp;
+    if (!data || strlen(data) == 0)
+    {
+        APPLY_PRINT("%s-%d : Empty data, skipping write to %s\n", __FUNCTION__, __LINE__, file);
+        return -1;
+    }
+
     fp = fopen(file, "w");
     if (fp == NULL) 
     {
@@ -719,7 +725,7 @@ static int GetDevicePropertiesEntry (char *pOutput, int size, char *sDevicePropC
 
 static int getFactoryPartnerId (char *pValue)
 {
-#if defined (_XB6_PRODUCT_REQ_) || defined(_HUB4_PRODUCT_REQ_) || defined(_SR300_PRODUCT_REQ_) || defined(_WNXL11BWL_PRODUCT_REQ_) || defined(_SCER11BEL_PRODUCT_REQ_) || defined (_RDKB_GLOBAL_PRODUCT_REQ_) 
+#if defined (_XB6_PRODUCT_REQ_) || defined(_HUB4_PRODUCT_REQ_) || defined(_SR300_PRODUCT_REQ_) || defined(_WNXL11BWL_PRODUCT_REQ_) || defined(_SCER11BEL_PRODUCT_REQ_) || defined (_RDKB_GLOBAL_PRODUCT_REQ_)
 	if(0 == platform_hal_getFactoryPartnerId(pValue))
 	{
 		APPLY_PRINT("%s:%d - %s\n",__FUNCTION__, __LINE__,pValue);
@@ -881,6 +887,116 @@ void CheckAndHandleInvalidPartnerIDRecoveryProcess(char *PartnerID) {
 
 #endif // (_RDKB_GLOBAL_PRODUCT_REQ_)
 
+#ifdef _ONESTACK_PRODUCT_REQ_
+/*
+ * Decide OneStack devicemode and save it to syscfg (never to DEVICEMODE_FILE).
+ *
+ * DEVICEMODE_FILE ("<mode>:<rawPartner>") is written only by ActivatePartnerId.
+ * It is used only when its partner (without "business" suffix) equals the
+ * PartnerID in use; otherwise it is ignored.
+ *
+ * No valid file:
+ *   business    : factory PartnerID is a business OTP (e.g. comcastBusiness) and
+ *                 PartnerID equals it without the suffix (comcast)
+ *   residential : everything else
+ * Factory PartnerID unreadable: keep syscfg devicemode; if empty use residential
+ * for this boot only (not saved, so the next good boot re-derives it).
+ *
+ * PARTNERID_FILE is created only on the first OneStack boot (reboot with empty
+ * syscfg devicemode) when PartnerID is not a substring of the factory PartnerID,
+ * i.e. the partner was changed on a non-OneStack build. A commercial device thus
+ * never gets "comcast" written there.
+ */
+static void set_onestack_devicemode (char *PartnerID, int isFactoryReset, char *deviceMode, size_t size)
+{
+   char rawFactoryPartnerID[PARTNER_ID_LEN] = {0};
+   char factoryPartnerID[PARTNER_ID_LEN]    = {0};
+   char syscfgDeviceMode[16]                = {0};
+   char fileDeviceMode[16]                  = {0};
+   char filePartnerID[DEVICEMODE_PARTNER_LEN] = {0};
+   int  hasFactoryPartnerID;
+   int  isBusinessFactory = 0;
+   int  hasValidFile;
+   int  saveDeviceMode = 1;
+
+   hasFactoryPartnerID = (0 == getFactoryPartnerId(rawFactoryPartnerID)) && (rawFactoryPartnerID[0] != '\0');
+   if (hasFactoryPartnerID)
+   {
+      snprintf(factoryPartnerID, sizeof(factoryPartnerID), "%s", rawFactoryPartnerID);
+      isBusinessFactory = onestackutils_strip_business_suffix(factoryPartnerID);
+   }
+
+   syscfg_get(NULL, "devicemode", syscfgDeviceMode, sizeof(syscfgDeviceMode));
+
+   /* Step 1: first OneStack boot with a partner changed on a non-OneStack build */
+   if (hasFactoryPartnerID && !isFactoryReset && (syscfgDeviceMode[0] == '\0') &&
+       (PartnerID[0] != '\0') && (0 != strcasecmp(PartnerID, "Unknown")) &&
+       !onestackutils_partner_in_factory(rawFactoryPartnerID, PartnerID) &&
+       (access(PARTNERID_FILE, F_OK) != 0))
+   {
+      FILE *fp = fopen(PARTNERID_FILE, "w");
+      if (fp)
+      {
+         fprintf(fp, "%s", PartnerID);
+         fclose(fp);
+         APPLY_PRINT("%s - PartnerID '%s' written to %s\n", __FUNCTION__, PartnerID, PARTNERID_FILE);
+      }
+      else
+      {
+         APPLY_PRINT("%s - Failed to create %s\n", __FUNCTION__, PARTNERID_FILE);
+      }
+   }
+
+   /* Step 2: devicemode from DEVICEMODE_FILE if it belongs to the partner in use */
+   hasValidFile = (0 == onestackutils_get_file_devicemode(fileDeviceMode, sizeof(fileDeviceMode),
+                                                          filePartnerID, sizeof(filePartnerID)));
+   if (hasValidFile)
+   {
+      onestackutils_strip_business_suffix(filePartnerID);
+      if (0 != strcasecmp(filePartnerID, PartnerID))
+      {
+         APPLY_PRINT("%s - %s partner '%s' != PartnerID '%s', ignoring\n",
+                     __FUNCTION__, DEVICEMODE_FILE, filePartnerID, PartnerID);
+         hasValidFile = 0;
+      }
+   }
+
+   if (hasValidFile)
+   {
+      snprintf(deviceMode, size, "%s", fileDeviceMode);
+   }
+   else if (hasFactoryPartnerID)
+   {
+      snprintf(deviceMode, size, "%s", (isBusinessFactory && (0 == strcasecmp(PartnerID, factoryPartnerID))) ?
+               DEVICEMODE_BUSINESS : DEVICEMODE_RESIDENTIAL);
+   }
+   else if (syscfgDeviceMode[0] != '\0')
+   {
+      snprintf(deviceMode, size, "%s", syscfgDeviceMode);
+   }
+   else
+   {
+      snprintf(deviceMode, size, "%s", DEVICEMODE_RESIDENTIAL);
+      saveDeviceMode = 0;
+   }
+
+   APPLY_PRINT("%s - PartnerID '%s', factory PartnerID '%s', syscfg devicemode '%s', file %s -> '%s'%s\n",
+               __FUNCTION__, PartnerID, rawFactoryPartnerID, syscfgDeviceMode,
+               hasValidFile ? "used" : "not used", deviceMode, saveDeviceMode ? "" : " (not saved)");
+
+   /* Step 3: save to syscfg only */
+   if (saveDeviceMode && (0 != strcmp(syscfgDeviceMode, deviceMode)))
+   {
+      /* syscfg_set_commit (not onestackutils_set_syscfg_devicemode): the
+       * OneStack_DeviceMode_split telemetry event is sent by the caller */
+      if (0 != syscfg_set_commit(NULL, "devicemode", deviceMode))
+      {
+         APPLY_PRINT("%s - Failed to set syscfg devicemode '%s'\n", __FUNCTION__, deviceMode);
+      }
+   }
+}
+#endif // _ONESTACK_PRODUCT_REQ_
+
 static int get_PartnerID (char *PartnerID)
 {
     char buf[PARTNER_ID_LEN];
@@ -889,6 +1005,7 @@ static int get_PartnerID (char *PartnerID)
     memset(buf, 0, sizeof(buf));
     //int isValidPartner = 0;
 
+	
     /*
      *  Check whether /nvram/.partner_ID file is available or not.
      *  If available then read it and apply defaults based on new partnerID
@@ -904,11 +1021,8 @@ static int get_PartnerID (char *PartnerID)
         {
             APPLY_PRINT("%s - PartnerID from HAL: %s\n",__FUNCTION__,PartnerID );
 #ifdef _ONESTACK_PRODUCT_REQ_
-            // Override PartnerID if needed and set devicemode
-            // Must be called BEFORE set_syscfg_partner_values to ensure syscfg gets the correct PartnerID
-            APPLY_PRINT("%s - Calling onestackutils_override_partnerid_and_set_devicemode with PartnerID from HAL: %s\n", __FUNCTION__, PartnerID);
-            onestackutils_override_partnerid_and_set_devicemode(PartnerID);
-            APPLY_PRINT("%s - onestackutils_override_partnerid_and_set_devicemode completed. PartnerID from HAL: %s\n", __FUNCTION__, PartnerID);
+            // Strip "business" suffix (comcastBusiness -> comcast); devicemode is set by set_onestack_devicemode()
+            onestackutils_strip_business_suffix(PartnerID);
 #endif // _ONESTACK_PRODUCT_REQ_
             validatePartnerId ( PartnerID );
         }
@@ -963,11 +1077,8 @@ static int get_PartnerID (char *PartnerID)
 
         APPLY_PRINT("%s - PartnerID from File: %s\n",__FUNCTION__,PartnerID );
 #ifdef _ONESTACK_PRODUCT_REQ_
-            // Override PartnerID if needed and set devicemode
-            // Must be called BEFORE set_syscfg_partner_values to ensure syscfg gets the correct PartnerID
-            APPLY_PRINT("%s - Calling onestackutils_override_partnerid_and_set_devicemode with PartnerID: %s\n", __FUNCTION__, PartnerID);
-            onestackutils_override_partnerid_and_set_devicemode(PartnerID);
-            APPLY_PRINT("%s - onestackutils_override_partnerid_and_set_devicemode completed. PartnerID: %s\n", __FUNCTION__, PartnerID);
+            // Strip "business" suffix (comcastBusiness -> comcast); devicemode is set by set_onestack_devicemode()
+            onestackutils_strip_business_suffix(PartnerID);
 #endif // _ONESTACK_PRODUCT_REQ_
 
         validatePartnerId ( PartnerID );
@@ -1685,8 +1796,7 @@ STATIC void addInSysCfgdDB (char *key, char *value)
            IsPSMMigrationNeeded = 1;
        }
    }
-#endif /* _RDKB_GLOBAL_PRODUCT_REQ_ */   
-
+#endif /* _RDKB_GLOBAL_PRODUCT_REQ_ */
    //Check whether migration needs to be handled or not
    if( 1 == IsPSMMigrationNeeded )
    {
@@ -1913,6 +2023,18 @@ STATIC void updateSysCfgdDB (char *key, char *value)
 
 #endif /* _RDKB_GLOBAL_PRODUCT_REQ_ */   
 
+#ifdef LPM_MANAGER_SUPPORT
+   if ( 0 == strcmp ( key, "Device.X_RDK_Features.LowPowerMode.Enable") )
+   {
+      set_syscfg_partner_values( value, "lpm_enable" );
+   }
+
+   if ( 0 == strcmp ( key, "Device.X_RDK_Features.LowPowerMode.TriggerWaitTime") )
+   {
+      set_syscfg_partner_values( value, "lpm_trigger_wait_time" );
+   }
+#endif /* LPM_MANAGER_SUPPORT */
+
    //Check whether migration needs to be handled or not
    if( 1 == IsPSMMigrationNeeded )
    {
@@ -1923,6 +2045,34 @@ STATIC void updateSysCfgdDB (char *key, char *value)
       create_file_644(PARTNER_DEFAULT_MIGRATE_FOR_NEW_PSM_MEMBER);
    }
 }
+
+#ifdef LPM_MANAGER_SUPPORT
+STATIC int shouldUpdateLpmSyscfgAlias (const char *key, const char *previousValue)
+{
+   const char *alias = NULL;
+   char currentValue[256] = {0};
+
+   if ( 0 == strcmp ( key, "Device.X_RDK_Features.LowPowerMode.Enable") )
+   {
+      alias = "lpm_enable";
+   }
+   else if ( 0 == strcmp ( key, "Device.X_RDK_Features.LowPowerMode.TriggerWaitTime") )
+   {
+      alias = "lpm_trigger_wait_time";
+   }
+   else
+   {
+      return 1;
+   }
+
+   if ( 0 != syscfg_get(NULL, alias, currentValue, sizeof(currentValue)) || currentValue[0] == '\0' )
+   {
+      return 1;
+   }
+
+   return ( 0 == strcmp(currentValue, previousValue) );
+}
+#endif /* LPM_MANAGER_SUPPORT */
 
 // This function can be removed after a few release cycles
 static int init_bootstrap_json (char *partner_nvram_obj, char *partner_etc_obj, char *PartnerID)
@@ -2308,9 +2458,23 @@ STATIC int compare_partner_json_param (char *partner_nvram_bs_obj, char *partner
                cJSON_ReplaceItemInObject(bs_obj,"BuildTime", cJSON_CreateString(getBuildTime()));
                if (!strcmp(source_bs,"-"))
                {
+#ifdef LPM_MANAGER_SUPPORT
+                  int updateLpmSyscfgAlias = shouldUpdateLpmSyscfgAlias(key, value_bs);
+#endif
                   APPLY_PRINT(" ** Param was not overridden previously. Update the active value..\n");
                   cJSON_ReplaceItemInObject(bs_obj,"ActiveValue", cJSON_CreateString(value));
+#ifdef LPM_MANAGER_SUPPORT
+                  if ( updateLpmSyscfgAlias )
+                  {
+                     updateSysCfgdDB(key, value);
+                  }
+                  else
+                  {
+                     APPLY_PRINT("Preserving LPM syscfg alias override for param %s\n", key);
+                  }
+#else
                   updateSysCfgdDB(key, value);
+#endif /* LPM_MANAGER_SUPPORT */
                }
             }
          }
@@ -2496,7 +2660,7 @@ static int apply_partnerId_default_values (char *data, char *PartnerID)
                                                     // For Sky, we need to pull the default login from the /tmp/serial.txt file.
                                                     FILE *fp = NULL;
                                                     char DefaultPassword[25] = {0};
-                                                    #if defined (_SCER11BEL_PRODUCT_REQ_) || defined(_SCXF11BFL_PRODUCT_REQ_)
+                                                    #if defined (_SCER11BEL_PRODUCT_REQ_) || defined(_SCXF11BFL_PRODUCT_REQ_) || defined(_XER2_PRODUCT_REQ_)
                                                     fp = popen("grep 'WIFI_PASSWORD' /tmp/serial.txt | cut -d '=' -f 2 | tr -d [:space:]", "r");
                                                     #else
                                                     fp = popen("grep 'WIFIPASSWORD' /tmp/serial.txt | cut -d '=' -f 2 | tr -d [:space:]", "r");
@@ -3008,7 +3172,30 @@ static int apply_partnerId_default_values (char *data, char *PartnerID)
                                                         APPLY_PRINT("%s - lnf Value is NULL\n", __FUNCTION__ );
                                                 }
                                         }
-#endif /* _RDKB_GLOBAL_PRODUCT_REQ_ */
+         #endif /* _RDKB_GLOBAL_PRODUCT_REQ_ */
+#ifdef LPM_MANAGER_SUPPORT
+                                                if ( 1 == isNeedToApplyPartnersDefault )
+                                                {
+                                                      paramObjVal = cJSON_GetObjectItem(cJSON_GetObjectItem( partnerObj, "Device.X_RDK_Features.LowPowerMode.Enable"), "ActiveValue");
+                                                      if ( paramObjVal != NULL && paramObjVal->valuestring != NULL )
+                                                      {
+                                                            APPLY_PRINT("%s: applying bootstrap LPM ActiveValue=%s\n",
+                                                                  __FUNCTION__, paramObjVal->valuestring);
+                                                            int writeStatus = set_syscfg_partner_values(paramObjVal->valuestring, "lpm_enable");
+                                                            APPLY_PRINT("%s: bootstrap lpm_enable setter status=%d\n",
+                                                                  __FUNCTION__, writeStatus);
+                                                      }
+                                                      else
+                                                      {
+                                                            APPLY_PRINT("%s: bootstrap LPM ActiveValue missing\n", __FUNCTION__);
+                                                      }
+                                                      paramObjVal = cJSON_GetObjectItem(cJSON_GetObjectItem( partnerObj, "Device.X_RDK_Features.LowPowerMode.TriggerWaitTime"), "ActiveValue");
+                                                      if ( paramObjVal != NULL && paramObjVal->valuestring != NULL )
+                                                      {
+                                                            set_syscfg_partner_values(paramObjVal->valuestring, "lpm_trigger_wait_time");
+                                                      }
+                                                }
+#endif /* LPM_MANAGER_SUPPORT */
                                 }
 
 				if( 1 == isNeedToApplyPartnersDefault )
@@ -3388,6 +3575,72 @@ if ( paramObjVal != NULL )
       memset(ntpServerName, 0, sizeof(ntpServerName));
       memset(jsonNTPItem, 0, sizeof(jsonNTPItem));
    }
+
+#ifdef LPM_MANAGER_SUPPORT
+   if (0 == IsValuePresentinSyscfgDB("lpm_enable"))
+   {
+      APPLY_PRINT("%s: lpm_enable absent; attempting bootstrap backfill for partner=%s\n",
+                  __FUNCTION__, PartnerID);
+      alwaysJson = cJSON_Parse(data);
+      if (alwaysJson)
+      {
+         alwaysPartnerObj = cJSON_GetObjectItem(alwaysJson, PartnerID);
+         if (alwaysPartnerObj)
+         {
+            alwaysParamObjVal = cJSON_GetObjectItem(
+                cJSON_GetObjectItem(alwaysPartnerObj, "Device.X_RDK_Features.LowPowerMode.Enable"),
+                "ActiveValue");
+            if (alwaysParamObjVal && alwaysParamObjVal->valuestring)
+            {
+               int writeStatus = set_syscfg_partner_values(alwaysParamObjVal->valuestring, "lpm_enable");
+               APPLY_PRINT("%s: bootstrap backfill lpm_enable=%s, setter status=%d\n",
+                           __FUNCTION__, alwaysParamObjVal->valuestring, writeStatus);
+            }
+            else
+            {
+               APPLY_PRINT("%s: bootstrap has no LPM ActiveValue for partner=%s\n",
+                           __FUNCTION__, PartnerID);
+            }
+         }
+         else
+         {
+            APPLY_PRINT("%s: bootstrap has no partner object for partner=%s\n",
+                        __FUNCTION__, PartnerID);
+         }
+         cJSON_Delete(alwaysJson);
+      }
+      else
+      {
+         APPLY_PRINT("%s: failed to parse bootstrap data for lpm_enable backfill\n", __FUNCTION__);
+      }
+   }
+   else
+   {
+      char currentLpmValue[16] = {0};
+      int readStatus = syscfg_get(NULL, "lpm_enable", currentLpmValue, sizeof(currentLpmValue));
+      APPLY_PRINT("%s: lpm_enable already present (syscfg_get status=%d, value=%s)\n",
+                  __FUNCTION__, readStatus, currentLpmValue);
+   }
+
+   if (0 == IsValuePresentinSyscfgDB("lpm_trigger_wait_time"))
+   {
+      alwaysJson = cJSON_Parse(data);
+      if (alwaysJson)
+      {
+         alwaysParamObjVal = cJSON_GetObjectItem(
+             cJSON_GetObjectItem(cJSON_GetObjectItem(alwaysJson, PartnerID), "Device.X_RDK_Features.LowPowerMode.TriggerWaitTime"),
+             "ActiveValue");
+         if (alwaysParamObjVal && alwaysParamObjVal->valuestring)
+         {
+            int writeStatus = set_syscfg_partner_values(alwaysParamObjVal->valuestring, "lpm_trigger_wait_time");
+            APPLY_PRINT("%s: bootstrap backfill lpm_trigger_wait_time=%s, setter status=%d\n",
+                        __FUNCTION__, alwaysParamObjVal->valuestring, writeStatus);
+         }
+         cJSON_Delete(alwaysJson);
+      }
+   }
+#endif /* LPM_MANAGER_SUPPORT */
+
     return 0;
 }
 #if defined (_XB6_PRODUCT_REQ_) || defined(_HUB4_PRODUCT_REQ_) || defined (_RDKB_GLOBAL_PRODUCT_REQ_)
@@ -3490,7 +3743,7 @@ static void getPartnerIdWithRetry(char* buf, char* PartnerID)
 		isMigrationReq = 1;
 		APPLY_PRINT("%s - Device in Reboot mode, Syndication Migration Required\n", __FUNCTION__ )
 	}
-	
+
   }
   else
   {
@@ -3527,6 +3780,10 @@ static void getPartnerIdWithRetry(char* buf, char* PartnerID)
 #if !defined (_XB6_PRODUCT_REQ_) && !defined(_HUB4_PRODUCT_REQ_) && !defined(_SR300_PRODUCT_REQ_) && !defined(_SCXF11BFL_PRODUCT_REQ_)
 		//Partner ID is null so need to set default partner ID as "comcast"
 		memset( PartnerID, 0, sizeof( PartnerID ) );
+#if defined (_ONESTACK_PRODUCT_REQ_)
+		// OneStack: leave empty, recovered from factory PartnerID before set_onestack_devicemode()
+		APPLY_PRINT("%s - PartnerID is NULL, will recover it from factory PartnerID\n", __FUNCTION__ );
+#else
 #if defined (_RDK_REF_PLATFORM_)
                 sprintf( PartnerID, "%s", "RDKM");
 #else
@@ -3534,6 +3791,7 @@ static void getPartnerIdWithRetry(char* buf, char* PartnerID)
 #endif
 		set_syscfg_partner_values( PartnerID, "PartnerID" );
 		APPLY_PRINT("%s - PartnerID is NULL so set default partner :%s\n", __FUNCTION__, PartnerID );		
+#endif // _ONESTACK_PRODUCT_REQ_
 #else
  		//RDKB-23050: Change: Adding few retries to get the partnerId from syscfg.db and if still fails fall back to factory_partnerId
                 getPartnerIdWithRetry(buf,PartnerID);
@@ -3547,19 +3805,20 @@ static void getPartnerIdWithRetry(char* buf, char* PartnerID)
     APPLY_PRINT("%s - PartnerID :%s. Calling get_PartnerID() to get a valid PartnerID that was received from XConf \n", __FUNCTION__, PartnerID );
     get_PartnerID ( PartnerID );
   }
+#ifdef _ONESTACK_PRODUCT_REQ_
+  // OneStack: unknown/empty PartnerID without PARTNERID_FILE (e.g. FR on 8.5 left "unknown"):
+  // recover it from the factory PartnerID (comcastBusiness -> comcast) via get_PartnerID()
+  else if ( ('\0' == PartnerID[0]) || (0 == strcasecmp (PartnerID, "Unknown")) ) {
+    APPLY_PRINT("%s - PartnerID :'%s'. Calling get_PartnerID() to recover it from factory PartnerID\n", __FUNCTION__, PartnerID );
+    get_PartnerID ( PartnerID );
+  }
+#endif // _ONESTACK_PRODUCT_REQ_
 
 #ifdef _ONESTACK_PRODUCT_REQ_
 
    char deviceMode[16] = {0};
 
-   if ((syscfg_get(NULL, "devicemode", deviceMode, sizeof(deviceMode)) == 0) && (deviceMode[0] != '\0'))
-   {
-      APPLY_PRINT("Devicemode is: %s\n", deviceMode);
-   }
-   else
-   {
-      APPLY_PRINT("Failed to fetch devicemode from syscfg\n");
-   }
+   set_onestack_devicemode(PartnerID, isNeedToApplyPartnersDefault, deviceMode, sizeof(deviceMode));
    t2_event_s("OneStack_DeviceMode_split", deviceMode);
 
    // For OneStack products, set_defaults() must be called after get_PartnerID() to ensure the partner ID and device mode are correctly configured
@@ -3599,16 +3858,26 @@ static void getPartnerIdWithRetry(char* buf, char* PartnerID)
        {
            if (access(BOOTSTRAP_INFO_FILE_BACKUP, F_OK) == 0)
            {
-               //If backup file exists, compare and copy it to /opt/secure/bootstrap.json
-               if ((flags & NVRAM_BOOTSTRAP_CLEARED) == 0)
+               char *ptr_nvram_bkup_json = NULL;
+               ptr_nvram_bkup_json = json_file_parse(BOOTSTRAP_INFO_FILE_BACKUP);
+               if (ptr_nvram_bkup_json)
                {
-                   char *ptr_nvram_bkup_json = NULL;
-                   ptr_nvram_bkup_json = json_file_parse(BOOTSTRAP_INFO_FILE_BACKUP);
-                   if (ptr_nvram_bkup_json)
-                   {
+                  //If backup file exists, compare and copy it to /opt/secure/bootstrap.json
+                  if ((flags & NVRAM_BOOTSTRAP_CLEARED) == 0)
+                  {
                        APPLY_PRINT("%s-%d Comparing %s and %s\n", __FUNCTION__, __LINE__, BOOTSTRAP_INFO_FILE_BACKUP, PARTNERS_INFO_FILE_ETC);
                        compare_partner_json_param( ptr_nvram_bkup_json, ptr_etc_json, PartnerID );
-                       free(ptr_nvram_bkup_json);
+                   }
+                   free(ptr_nvram_bkup_json);
+               }
+               else
+               {
+                   APPLY_PRINT("%s-%d %s is empty, initializing bootstrap\n", __FUNCTION__, __LINE__, BOOTSTRAP_INFO_FILE_BACKUP);
+                   ptr_nvram_json = json_file_parse( PARTNERS_INFO_FILE );
+                   init_bootstrap_json( ptr_nvram_json, ptr_etc_json, PartnerID );
+                   if ( ptr_nvram_json )
+                   {
+                       free( ptr_nvram_json );
                    }
                }
            }
@@ -3677,4 +3946,3 @@ static void getPartnerIdWithRetry(char* buf, char* PartnerID)
 
    return(0);
 }
-

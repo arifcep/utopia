@@ -47,16 +47,9 @@ source /etc/waninfo.sh
 WAN_INTERFACE=$(getWanInterfaceName)
 DEFAULT_WAN_INTERFACE="erouter0"
 LANIPV6Support=`sysevent get LANIPv6GUASupport`
-DEVICETYPE=$(dmcli eRT getv Device.DeviceInfo.X_RDKCENTRAL-COM_RFC.Identity.DeviceType | grep value | cut -d ":" -f 3 | tr -d ' ' | tr -s ' ' | tr '[:lower:]' '[:upper:]')
-if [ "$DEVICETYPE" = "TEST" ] && [ "$USE_DYNAMICKEYING" = "TRUE" ]; then
-    USE_DEVKEYS="-f authorized_keys_dev"
-    echo_t "[utopia]: dropbear using dev authorization keys"
-else
-    USE_DEVKEYS=""
-    echo_t "[utopia]: dropbear using prod authorization keys"
-fi
+DEVICE_MODE=`deviceinfo.sh -mode`
 
-if [ "$BOX_TYPE" = "HUB4" ] || [ "$BOX_TYPE" = "SR300" ] || [ "$BOX_TYPE" = "SE501" ] || [ "$BOX_TYPE" = "WNXL11BWL" ] || [ "$BOX_TYPE" = "SR213" ] ||  [ "$BOX_TYPE" == "SCER11BEL" ] || [ "$BOX_TYPE" == "SCXF11BFL" ]; then
+if [ "$BOX_TYPE" = "HUB4" ] || [ "$BOX_TYPE" = "SR300" ] || [ "$BOX_TYPE" = "SE501" ] || [ "$BOX_TYPE" = "WNXL11BWL" ] || [ "$BOX_TYPE" = "SR213" ] ||  [ "$BOX_TYPE" == "SCER11BEL" ] || [ "$BOX_TYPE" == "SCXF11BFL" ] || [ "$BOX_TYPE" == "XER2" ]; then
    CMINTERFACE=$WAN_INTERFACE
 elif ([ "$BOX_TYPE" = "XB6" -a "$MANUFACTURE" = "Arris" ]); then
 	CMINTERFACE=$WAN_INTERFACE
@@ -92,7 +85,7 @@ fi
 get_listen_params() {
     LISTEN_PARAMS=""
     #Get IPv4 address of wan0
-    if ([ "$WAN_INTERFACE" =  "$DEFAULT_WAN_INTERFACE" ] && [ "$BOX_TYPE" != "VNTXER5" ] && [ "$BOX_TYPE" != "SCER11BEL" ] && [ "$BOX_TYPE" != "SCXF11BFL" ]) ; then
+    if ([ "$WAN_INTERFACE" =  "$DEFAULT_WAN_INTERFACE" ] && [ "$BOX_TYPE" != "VNTXER5" ] && [ "$BOX_TYPE" != "SCER11BEL" ] && [ "$BOX_TYPE" != "SCXF11BFL" ] && [ "$BOX_TYPE" != "XER2" ]) ; then
         if [ "$WAN0_IS_DUMMY" = "true" ]; then
 	        CM_IPV4=`ifconfig privbr:0 | grep "inet addr" | awk '/inet/{print $2}'  | cut -f2 -d:`
 		#Get IPv6 address of wan0
@@ -134,6 +127,18 @@ get_listen_params() {
     fi
 }
 
+# is_valid_ipv4 <ip>
+# Returns 0 if <ip> is a valid, non-unspecified IPv4 address (a.b.c.d, each
+# octet 0-255, not 0.0.0.0); returns 1 otherwise.
+is_valid_ipv4() {
+    local ip="$1"
+    local valid_octet='(25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)'
+    if [[ ! $ip =~ ^${valid_octet}\.${valid_octet}\.${valid_octet}\.${valid_octet}$ ]] || [ "$ip" = "0.0.0.0" ]; then
+        return 1
+    fi
+    return 0
+}
+
 do_start() {
    #DIR_NAME=/tmp/home/admin
    #if [ ! -d $DIR_NAME ] ; then
@@ -144,8 +149,14 @@ do_start() {
       #chgrp admin $DIR_NAME
       #chmod 755 $DIR_NAME
    #fi
+    # Use prod keys only when both the build and deviceType RFC are prod; dev keys otherwise
+    USE_DEVKEYS="-f authorized_keys_dev"
+    DEVICETYPE=$(dmcli eRT getv Device.DeviceInfo.X_RDKCENTRAL-COM_RFC.Identity.DeviceType | grep value | cut -d ":" -f 3 | tr -d ' ' | tr -s ' ' | tr '[:lower:]' '[:upper:]')
+    if [ "$BUILD_TYPE" = "prod" -a "$DEVICETYPE" = "PROD" ]; then
+	    USE_DEVKEYS=""
+    fi
 
-    if ([ "$BOX_TYPE" = "XB6" -a "$MANUFACTURE" = "Arris" ] || [ "$MODEL_NUM" = "INTEL_PUMA" ] || [ "$BOX_TYPE" = "VNTXER5" ] || [ "$BOX_TYPE" = "SCER11BEL" -a "$LANIPV6Support" != "true" ] || [ "$BOX_TYPE" = "SCXF11BFL" ]) ;then
+    if ([ "$BOX_TYPE" = "XB6" -a "$MANUFACTURE" = "Arris" ] || [ "$MODEL_NUM" = "INTEL_PUMA" ] || [ "$BOX_TYPE" = "VNTXER5" ] || [ "$BOX_TYPE" = "SCER11BEL" -a "$LANIPV6Support" != "true" ] || [ "$BOX_TYPE" = "SCXF11BFL" ] || [ "$BOX_TYPE" = "XER2" ]) ;then
     	get_listen_params
 	CMINTERFACE=$WAN_INTERFACE
     fi
@@ -156,8 +167,8 @@ do_start() {
         #getting the IPV4 address for V4 CM SSH packets
         if [ "$WAN_INTERFACE" =  "$DEFAULT_WAN_INTERFACE" ] ; then
             if [ -f "/nvram/ETHWAN_ENABLE" ];then
-	#        CM_IPV4=`ifconfig privbr:0 | grep "inet addr" | awk '/inet/{print $2}'  | cut -f2 -d:`
-	 #   else
+                CM_IPV4=`ip -4 addr show dev $CMINTERFACE scope global | awk '/inet/{print $2}' | cut -d '/' -f1`
+	    else
                 CM_IPV4=`ifconfig privbr:0 | grep "inet addr" | awk '/inet/{print $2}'  | cut -f2 -d:`
             fi
         else
@@ -196,17 +207,31 @@ do_start() {
 	    fi
         fi
     elif [ "$BOX_TYPE" = "WNXL11BWL" ]; then
-	    CM_IP=`ip -4 addr show dev $CMINTERFACE  scope global | awk '/inet/{print $2}' | cut -d '/' -f1 | head -n1`
-        if [ ! -z $CM_IP ]; then
-	        commandString="$commandString -p [$CM_IP]:22"
-	    fi
+        commandString=""
         CM_IPv6=`ip -6 addr show dev wwan0  scope global | awk '/inet/{print $2}' | cut -d '/' -f1 | head -n1`
-	    if [ ! -z $CM_IPv6 ]; then
+        if [ ! -z "$CM_IPv6" ]; then
             commandString="$commandString -p [$CM_IPv6]:22"
-	    fi
-	    CM_IPv4=`ip -4 addr show dev wwan0  scope global | awk '/inet/{print $2}' | cut -d '/' -f1 | head -n1`
-	    if [ ! -z $CM_IPv4 ]; then
+        fi
+        CM_IPv4=`ip -4 addr show dev wwan0  scope global | awk '/inet/{print $2}' | cut -d '/' -f1 | head -n1`
+        if [ ! -z "$CM_IPv4" ]; then
             commandString="$commandString -p [$CM_IPv4]:22"
+        fi
+        if [ "$DEVICE_MODE" = "Extender" ]; then
+            CM_IP=$(ip -4 addr show dev "$CMINTERFACE" scope global | awk '/inet/{print $2}' | cut -d '/' -f1 | head -n1)
+            if is_valid_ipv4 "$CM_IP"; then
+                commandString="$commandString -p [$CM_IP]:22"
+            elif [ -n "$BRHOME_DHCP_IP" ]; then
+                echo_t "[utopia] $CMINTERFACE has no IP via ip command, using pre-validated ipv4_br-home_dhcp_ipaddr=$BRHOME_DHCP_IP"
+                commandString="$commandString -p [$BRHOME_DHCP_IP]:22"
+            else
+                CM_IP=$(sysevent get ipv4_br-home_dhcp_ipaddr)
+                echo_t "[utopia] $CMINTERFACE has no IP via ip command, falling back to sysevent ipv4_br-home_dhcp_ipaddr=$CM_IP"
+                if is_valid_ipv4 "$CM_IP"; then
+                    commandString="$commandString -p [$CM_IP]:22"
+                else
+                    echo_t "[utopia] no valid IP for $CMINTERFACE ($CM_IP), skipping listen address"
+                fi
+            fi
         fi
     else
         CM_IP=""
@@ -237,7 +262,7 @@ do_start() {
    getConfigFile $DROPBEAR_PARAMS_1
    getConfigFile $DROPBEAR_PARAMS_2
 
-   if ([ "$BOX_TYPE" = "XB6" -a "$MANUFACTURE" = "Arris" ] || [ "$MODEL_NUM" = "INTEL_PUMA" ] || [ "$BOX_TYPE" = "VNTXER5" ] || [ "$BOX_TYPE" = "SCER11BEL" -a "$LANIPV6Support" != "true" ] || [ "$BOX_TYPE" = "SCXF11BFL" ]) ;then
+   if ([ "$BOX_TYPE" = "XB6" -a "$MANUFACTURE" = "Arris" ] || [ "$MODEL_NUM" = "INTEL_PUMA" ] || [ "$BOX_TYPE" = "VNTXER5" ] || [ "$BOX_TYPE" = "SCER11BEL" -a "$LANIPV6Support" != "true" ] || [ "$BOX_TYPE" = "SCXF11BFL" ] || [ "$BOX_TYPE" = "XER2" ]) ;then
        dropbear -E -s -b /etc/sshbanner.txt -a -r $DROPBEAR_PARAMS_1 -r $DROPBEAR_PARAMS_2 $LISTEN_PARAMS -P $PID_FILE $USE_DEVKEYS 2>>$CONSOLEFILE
     if [ -z "$LISTEN_PARAMS" ] ; then
         echo_t "[utopia]: dropbear was not started for erouter0 interface with valid params."
@@ -301,7 +326,7 @@ service_start() {
     echo_t "[utopia] starting ${SERVICE_NAME} service"
 	ulog ${SERVICE_NAME} status "starting ${SERVICE_NAME} service"
 
-   if ([ "$BOX_TYPE" = "XB6" -a "$MANUFACTURE" = "Arris" ] || [ "$MODEL_NUM" = "INTEL_PUMA" ] || [ "$BOX_TYPE" = "VNTXER5" ] || [ "$BOX_TYPE" = "SCER11BEL" -a "$LANIPV6Support" != "true" ] || [ "$BOX_TYPE" = "SCXF11BFL" ]) ;then
+   if ([ "$BOX_TYPE" = "XB6" -a "$MANUFACTURE" = "Arris" ] || [ "$MODEL_NUM" = "INTEL_PUMA" ] || [ "$BOX_TYPE" = "VNTXER5" ] || [ "$BOX_TYPE" = "SCER11BEL" -a "$LANIPV6Support" != "true" ] || [ "$BOX_TYPE" = "SCXF11BFL" ] || [ "$BOX_TYPE" = "XER2" ]) ;then
 	   CMINTERFACE=$WAN_INTERFACE
       ifconfig $CMINTERFACE | grep Global
       ret=$?
@@ -438,9 +463,22 @@ case "$1" in
       service_stop
       service_start
       ;;
+  ipv4_br-home_dhcp_ipaddr)
+      if is_valid_ipv4 "$2"; then
+          if [ "$DEVICE_MODE" = "Extender" ]; then
+              BRHOME_DHCP_IP="$2"
+              service_stop
+              service_start
+          else
+              echo_t "non-extender mode. Skipping ipv4_br-home_dhcp_ipaddr sysevent"
+          fi
+      else
+          echo_t "ipv4_br-home_dhcp_ipaddr not set or invalid ($2), skipping sshd restart"
+      fi
+      ;;
 
   *)
-        echo "Usage: $SELF_NAME [${SERVICE_NAME}-start|${SERVICE_NAME}-stop|${SERVICE_NAME}-restart|ssh_server_restart|lan-status|wan-status]" >&2
+        echo "Usage: $SELF_NAME [${SERVICE_NAME}-start|${SERVICE_NAME}-stop|${SERVICE_NAME}-restart|wan-status|bridge-status|current_wan_ifname|ipv4_br-home_dhcp_ipaddr <ip>]" >&2
         exit 3
         ;;
 esac

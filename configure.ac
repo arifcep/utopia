@@ -50,6 +50,15 @@ AC_PREFIX_DEFAULT(`pwd`)
 AC_ENABLE_SHARED
 AC_DISABLE_STATIC
 
+#Enable NFT compile time flags if firewall-nft is set as yes
+AC_ARG_ENABLE([firewall-nft],
+[  --enable-firewall-nft=yes Turn on nft Feature],
+[case "${enableval}" in
+  yes) firewall_nft=true ;;
+  *) AC_MSG_ERROR([bad value ${enableval} for --enable-firewall-nft]) ;;
+esac],[firewall_nft=false])
+AM_CONDITIONAL(FIREWALL_NFT, test x"$firewall_nft" = x"true")
+
 AC_CONFIG_HEADERS([config.h])
 AC_CONFIG_MACRO_DIR([m4])
 
@@ -241,11 +250,24 @@ AC_ARG_ENABLE([hotspot],
         [enable_hotspot=true])
 AM_CONDITIONAL([ENABLE_HOTSPOT_SERVICE], [test x$enable_hotspot = xtrue])
 
+AC_ARG_ENABLE([igmpmld],
+         AS_HELP_STRING([--enable-igmpmld],[Enable igmpmld]),
+        [
+          case "${enableval}" in
+            yes) enable_igmpmld=true ;;
+            no) enable_igmpmld=false ;;
+            *) AC_MSG_ERROR([bad value ${enableval} for --enable-igmpmld]) ;;
+          esac
+           ],
+        [enable_igmpmld=true])
+AM_CONDITIONAL([ENABLE_MCAST_SERVICE], [test x$enable_igmpmld = xtrue])
+
 AC_CONFIG_FILES(
 	Makefile
 	source/Makefile
 	source/dhcpproxy/Makefile
 	source/firewall/Makefile
+	source/firewall_nft/Makefile
 	source/firewall_log/Makefile
 	source/igd/Makefile
 	source/igd/src/Makefile

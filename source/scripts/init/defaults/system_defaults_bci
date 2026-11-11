@@ -1074,6 +1074,17 @@ $lastActiontakentime=0
 $process_memory_log_count=0
 $selfheal_ping_DataBlockSize=56
 
+#IOT VLAN
+$iot_ifname=br106
+$iot_ipaddr=192.168.106.1
+$iot_netmask=255.255.255.0
+$iot_dhcp_start=192.168.106.100
+$iot_dhcp_end=192.168.106.150
+
+# XSMART or IOT Enable
+$X_RDKCENTRAL-COM_ENABLEIOT=false
+$lost_and_found_enable=true
+
 # Webpa Parameters
 $X_RDKCENTRAL-COM_LastRebootReason=unknown
 $X_RDKCENTRAL-COM_LastRebootCounter=0
@@ -1121,7 +1132,7 @@ $unique_telemetry_interval=0
 
 #SNMPv3 control default values
 $V3Support=false
-$dmesglogsync_interval=900
+$dmesglogsync_interval=60
 
 #ForwardSSH is enabled by default
 $ForwardSSH=true
@@ -1148,8 +1159,8 @@ $SNMP_RestartMaintenanceEnable=true
 $DeferFWDownloadReboot=290
 
 #SelfHeal Log Backup
-$log_backup_enable=false
-$log_backup_threshold=0
+$log_backup_enable=true
+$log_backup_threshold=3
 
 #EthAgent Logging default values
 $eth_log_enabled=false
@@ -1255,9 +1266,6 @@ $low_queue_reboot_threshold=0
 $EnableOCSPStapling=true
 $EnableOCSPCA=true
 
-#Use XPKI certificate for lnf
-$LnFUseXPKI_Enable=true
-
 # Dynamic DNS
 $dynamic_dns_enable=0
 $ddns_service_providers_list=no-ip,dyndns,duckdns,afraid,easydns,changeip
@@ -1319,6 +1327,18 @@ $DscpEnabledList_1=
 $DscpSleepInterval_1=0
 $DscpEnabledList_2=
 $DscpSleepInterval_2=0
+
+#GatewayManager factory default values
+$ConfigSyncEnableOnChange=true
+$ConfigSyncInterval=300
+$DNSControl=2
+$ReqFailoverCloudAckEnable=false
+$ClearDeviceList=false
+$StationModeTimeOut=30
+$HealthCheckTimeout=60
+$GatewayRestoreAttemptCount=0
+$RemDeviceDetectionTimeout=60
+$FailoverEnable=-1
 
 #Direct Download Enable default value
 $SWDLDirectEnable=true

@@ -190,6 +190,48 @@ int numifs = sizeof(ifnames) / sizeof(*ifnames);
 #if defined (_ONESTACK_PRODUCT_REQ_)
 static char ipv6_delegation_prefix[IPV6_PREFIX_BUF_LEN+1] ={0};
 #endif
+
+static int validate_prefix(char *ipv6_prefix)
+{
+    char *slash, *endptr;
+    char prefix_addr_str[INET6_ADDRSTRLEN] = {0};
+    struct in6_addr prefix_addr;
+    long prefix_len;
+    size_t addr_len;
+
+    if (ipv6_prefix == NULL || ipv6_prefix[0] == '\0')
+    {
+        return 0;
+    }
+
+    slash = strchr(ipv6_prefix, '/');
+    if (slash == NULL)
+    {
+        return 0;
+    }
+
+    addr_len = (size_t)(slash - ipv6_prefix);
+    if (addr_len == 0 || addr_len >= sizeof(prefix_addr_str))
+    {
+        return 0;
+    }
+
+    memcpy(prefix_addr_str, ipv6_prefix, addr_len);
+    prefix_addr_str[addr_len] = '\0';
+    if (strspn(slash + 1, "0123456789") != strlen(slash + 1))
+    {
+        return 0;
+    }
+
+    prefix_len = strtol(slash + 1, &endptr, 10);
+    if (endptr == slash + 1 || *endptr != '\0' || prefix_len < 0 || prefix_len > 128)
+    {
+        return 0;
+    }
+
+    return (inet_pton(AF_INET6, prefix_addr_str, &prefix_addr) > 0);
+}
+
 /*
  ****************************************************************
  *               IPv6 Firewall                                  *
@@ -312,11 +354,8 @@ int prepare_ipv6_firewall(const char *fw_file)
 
 	do_wpad_isatap_blockv6(filter_fp);
 
-#if !(defined(_COSA_INTEL_XB3_ARM_) || defined(_COSA_BCM_MIPS_))
         prepare_rabid_rules(filter_fp, mangle_fp, IP_V6);
-#else
-        prepare_rabid_rules_v2020Q3B(filter_fp, mangle_fp, IP_V6);
-#endif
+
 	do_parental_control(filter_fp,nat_fp, 6);
 #if defined(SPEED_BOOST_SUPPORTED) && defined(SPEED_BOOST_SUPPORTED_V6)
 	WAN_FAILOVER_SUPPORT_CHECK
@@ -502,7 +541,7 @@ void do_ipv6_filter_table(FILE *fp){
 	FIREWALL_DEBUG("Inside do_ipv6_filter_table \n");
    int inf_num = 0;
    
-#if defined(_COSA_BCM_ARM_) && (defined(_CBR_PRODUCT_REQ_) || defined(_XB6_PRODUCT_REQ_)) && !defined(_SCER11BEL_PRODUCT_REQ_) && !defined(_XER5_PRODUCT_REQ_)
+#if defined(_COSA_BCM_ARM_) && (defined(_CBR_PRODUCT_REQ_) || defined(_XB6_PRODUCT_REQ_)) && !defined(_SCER11BEL_PRODUCT_REQ_) && !defined(_XER5_PRODUCT_REQ_) && !defined(_XER2_PRODUCT_REQ_)
    FILE *f = NULL;
    char request[256], response[256], cm_ipv6addr[40];
    unsigned int a[16] = {0};
@@ -519,6 +558,12 @@ void do_ipv6_filter_table(FILE *fp){
    fprintf(fp, ":lan2wan_pc_service - [0:0]\n");
    fprintf(fp, ":wan2lan - [0:0]\n");
 
+#if defined(_SR213_PRODUCT_REQ_) || defined(_HUB4_PRODUCT_REQ_)
+   if (strcmp ( devicePartnerId, "sky-uk") == 0 || strcmp ( devicePartnerId, "sky-italia") == 0)
+   {
+        do_block_lan_access_to_wan_ssh_ipv6(fp);
+   }
+#endif
 #if defined (_HUB4_PRODUCT_REQ_) || defined (_RDKB_GLOBAL_PRODUCT_REQ_)
 #if defined (HUB4_BFD_FEATURE_ENABLED) || defined (IHC_FEATURE_ENABLED)
 #if defined(_RDKB_GLOBAL_PRODUCT_REQ_)
@@ -622,7 +667,7 @@ void do_ipv6_filter_table(FILE *fp){
    // Video Analytics Firewall rule to allow port 58081 only from LAN interface
    do_OpenVideoAnalyticsPort (fp);
 
-#if defined(_COSA_BCM_ARM_) && (defined(_CBR_PRODUCT_REQ_) || defined(_XB6_PRODUCT_REQ_)) && !defined(_SCER11BEL_PRODUCT_REQ_) && !defined(_XER5_PRODUCT_REQ_)
+#if defined(_COSA_BCM_ARM_) && (defined(_CBR_PRODUCT_REQ_) || defined(_XB6_PRODUCT_REQ_)) && !defined(_SCER11BEL_PRODUCT_REQ_) && !defined(_XER5_PRODUCT_REQ_) && !defined(_XER2_PRODUCT_REQ_)
    /* To avoid open ssh connection to CM IP TCXB6-2879*/
    snprintf(request, 256, "snmpget -cpub -v2c -Ov %s %s", CM_SNMP_AGENT, kOID_cmRemoteIpv6Address);
 
@@ -649,10 +694,14 @@ void do_ipv6_filter_table(FILE *fp){
    // Create iptable chain to ratelimit remote management packets
    do_webui_rate_limit(fp);
    // Rate limiting the webui-access lan side
+   int cmdiag_valid = (cmdiag_ifname[0] != '\0');
    if(isBridgeMode)
    {
-       lan_access_set_proto(fp, "80",cmdiag_ifname);
-       lan_access_set_proto(fp, "443",cmdiag_ifname);
+       if (cmdiag_valid)
+       {
+	   lan_access_set_proto(fp, "80",cmdiag_ifname);
+	   lan_access_set_proto(fp, "443",cmdiag_ifname);
+       }
    }
    else
    {
@@ -662,7 +711,7 @@ void do_ipv6_filter_table(FILE *fp){
    // Blocking webui access to unnecessary interfaces
    fprintf(fp, "-A INPUT -p tcp -i %s --match multiport --dport 80,443 -j ACCEPT\n",lan_ifname);
    fprintf(fp, "-A INPUT -p tcp -i %s --match multiport --dport 80,443 -j ACCEPT\n",ecm_wan_ifname);
-   if (isCmDiagEnabled)
+   if (isCmDiagEnabled && cmdiag_valid)
    {
       fprintf(fp, "-A INPUT -p tcp -i %s --match multiport --dport 80,443 -j ACCEPT\n",cmdiag_ifname);
    }
@@ -781,9 +830,6 @@ void do_ipv6_filter_table(FILE *fp){
    if (isFirewallEnabled) {
       // Get the current WAN IPv6 interface (which differs from the IPv4 in case of tunnels)
       char query[10],port[10],tmpQuery[10];
-#if defined(_COSA_FOR_BCI_) || defined(_ONESTACK_PRODUCT_REQ_)
-      char wanIPv6[64];
-#endif
       int rc, ret;
       errno_t safec_rc = -1;
 
@@ -848,12 +894,11 @@ void do_ipv6_filter_table(FILE *fp){
 #if defined(_COSA_FOR_BCI_) || defined(_ONESTACK_PRODUCT_REQ_)
       if(isWanPingDisableV6 == 1)
       {
-             syscfg_get(NULL, "wanIPv6Address", wanIPv6, sizeof(wanIPv6));
-             if(0 != strcmp(wanIPv6,""))
-             {
-                 fprintf(fp, "-A INPUT -i brlan0 -d %s -p icmpv6 -m icmp6 --icmpv6-type 128 -j DROP\n", wanIPv6); // Echo request
-                 fprintf(fp, "-A INPUT -i brlan0 -d %s -p icmpv6 -m icmp6 --icmpv6-type 129 -m state --state NEW,INVALID,RELATED -j DROP\n", wanIPv6); // Echo reply
-             }
+         int index;
+         for (index = 0; index < current_wan_ipv6_num; index++)
+         {
+            fprintf(fp, "-A INPUT -i brlan0 -d %s -p icmpv6 -m icmp6 --icmpv6-type 128 -j DROP\n", current_wan_ipv6[index]);
+         }
       }
 #endif
      
@@ -885,7 +930,7 @@ void do_ipv6_filter_table(FILE *fp){
        * exclude primary lan*/
       prepare_ipv6_multinet(fp);
     #endif
-    #if !defined(_XER5_PRODUCT_REQ_) && !defined (_SCER11BEL_PRODUCT_REQ_) && !defined(_COSA_QCA_ARM_) //wan0 is not applicable for XER5
+    #if !defined(_XER5_PRODUCT_REQ_) && !defined (_SCER11BEL_PRODUCT_REQ_) && !defined(_COSA_QCA_ARM_) && !defined(_XER2_PRODUCT_REQ_) //wan0 is not applicable for XER5
       /* not allow ping wan0 from brlan0 */
       int i;
       for(i = 0; i < ecm_wan_ipv6_num; i++){
@@ -1300,12 +1345,13 @@ v6GPFirewallRuleNext:
 #endif
 #endif
 #ifdef FEATURE_MAPE
-      if (prev_prefix[0] != '\0' && prefix[0] != '\0' && strcmp(prev_prefix, prefix) != 0)
+      if (validate_prefix(prev_prefix) && validate_prefix(prefix) && strcmp(prev_prefix, prefix) != 0)
       {
          fprintf(fp, "-A FORWARD -i brlan0 -o erouter0 -s %s -j REJECT --reject-with icmp6-policy-fail\n", prev_prefix);
       }
 #endif
-      if ( '\0' != prefix[0] ) {
+
+      if (validate_prefix(prefix)) {
          //fprintf(fp, "-A FORWARD ! -s %s -i %s -m limit --limit 10/sec -j LOG --log-level %d --log-prefix \"UTOPIA: FW. IPv6 FORWARD anti-spoofing\"\n", prefix, lan_ifname,syslog_level);
          //fprintf(fp, "-A FORWARD ! -s %s -i %s -m limit --limit 10/sec -j REJECT --reject-with icmp6-adm-prohibited\n", prefix, lan_ifname);
 #if defined (_COSA_FOR_BCI_) || defined (_ONESTACK_PRODUCT_REQ_)
@@ -1372,7 +1418,7 @@ v6GPFirewallRuleNext:
          fprintf(fp, "-A FORWARD -i %s -o %s -m pkttype --pkt-type unicast ! -s %s -j LOG_FORWARD_DROP\n", lan_ifname, wan6_ifname, lan_prefix);
       }
 
-#if defined(_COSA_BCM_ARM_) && (defined(_CBR_PRODUCT_REQ_) || defined(_XB6_PRODUCT_REQ_)) && !defined(_SCER11BEL_PRODUCT_REQ_) && !defined(_XER5_PRODUCT_REQ_)
+#if defined(_COSA_BCM_ARM_) && (defined(_CBR_PRODUCT_REQ_) || defined(_XB6_PRODUCT_REQ_)) && !defined(_SCER11BEL_PRODUCT_REQ_) && !defined(_XER5_PRODUCT_REQ_) && !defined(_XER2_PRODUCT_REQ_)
       if (isNatReady)
       {
           FILE *f = NULL;
@@ -2148,10 +2194,10 @@ void applyRoutingRules(FILE* fp,ipv6_type type)
 	     }
 	     else
 	     {
-		 sysevent_get(sysevent_fd, sysevent_token, "ipv6_prefix", prefix, sizeof(prefix));
+		 sysevent_get(sysevent_fd, sysevent_token, "lan_prefix", prefix, sizeof(prefix));
 	     }
          #else
-	     sysevent_get(sysevent_fd, sysevent_token, "ipv6_prefix", prefix, sizeof(prefix));
+	     sysevent_get(sysevent_fd, sysevent_token, "lan_prefix", prefix, sizeof(prefix));
          #endif
 	 }
 	 if (strlen(prefix) != 0)
@@ -2373,6 +2419,9 @@ void do_ipv6_nat_table(FILE* fp)
 #endif
 
 #ifdef _PLATFORM_BANANAPI_R4_
+#if defined (FEATURE_MAPT) || defined (FEATURE_SUPPORT_MAPT_NAT46)
+   if (!isMAPTReady)
+#endif
    fprintf(fp, "-A POSTROUTING -o %s -j MASQUERADE\n", current_wan_ifname);
 #endif
 
